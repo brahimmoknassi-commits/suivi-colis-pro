@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Suivi Colis Pro</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#17202a">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Suivi Colis">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+body{font-family:Arial,sans-serif;margin:0;background:#f4f6f8;color:#17202a}
+header{background:#17202a;color:white;padding:18px;text-align:center}
+main{max-width:1050px;margin:auto;padding:18px}
+.card{background:white;border-radius:14px;padding:18px;margin-bottom:16px;box-shadow:0 2px 10px #0001}
+.row{display:flex;gap:10px;flex-wrap:wrap}
+button,select,input{padding:13px;border-radius:9px;border:1px solid #ccd3da;font-size:16px}
+button{cursor:pointer;background:#17202a;color:white;border:0}
+button.secondary{background:#64748b}
+button.danger{background:#b42318}
+button.active{outline:3px solid #93c5fd}
+#barcode{width:100%;box-sizing:border-box;font-size:22px}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.stat{padding:15px;border-radius:12px;background:#eef2f6;text-align:center}
+.stat b{display:block;font-size:28px;margin-top:5px}
+table{width:100%;border-collapse:collapse}
+th,td{padding:9px;border-bottom:1px solid #e5e7eb;text-align:left}
+.small{color:#667085;font-size:13px}
+.ok{color:#067647;font-weight:bold}.ret{color:#b42318;font-weight:bold}
+#wsCodeDisplay{font-family:monospace;font-size:14px}
+@media(max-width:700px){.stats{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<header><h1>📦 Suivi Colis Pro</h1><div>Sortie • Retour • Livrée</div></header>
+<main>
+<div class="card">
+<h2>🔗 Lier téléphone et PC</h2>
+<div id="wsSetup">
+  <p class="small">Créez un nouvel espace d'équipe, ou collez le code que votre collègue vous a envoyé pour voir les mêmes colis sur tous les appareils, en direct.</p>
+  <div class="row">
+    <button id="wsCreate">✨ Créer un nouvel espace</button>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <input id="wsJoinInput" placeholder="Coller le code d'équipe ici" style="flex:1;min-width:220px">
+    <button class="secondary" id="wsJoinBtn">🔗 Rejoindre</button>
+  </div>
+</div>
+<div id="wsConnected" hidden>
+  <p class="small">✅ Connecté. Donnez ce code à vos collègues pour qu'ils rejoignent le même espace :</p>
+  <div class="row">
+    <input id="wsCodeDisplay" readonly style="flex:1;min-width:220px">
+    <button id="wsCopyBtn">📋 Copier</button>
+    <button class="danger" id="wsChangeBtn">Changer d'espace</button>
+  </div>
+</div>
+</div>
+
+<div class="card">
+  <div class="row">
+    <select id="livreur">
+      <option>Ayoub</option><option>Rachid</option><option>Soufiane</option>
+      <option>Anwar</option><option>Mohamed</option><option>Ibrahim</option>
+    </select>
+    <button id="sortie" class="active" onclick="setMode('Sortie')">📤 SORTIE</button>
+    <button id="retour" class="secondary" onclick="setMode('Retour')">🔄 RETOUR</button>
+  </div>
+  <p id="modeText"><b>Mode SORTIE</b> — scannez les colis sortants.</p>
+  <div class="row">
+    <input id="barcode" autocomplete="off" autofocus placeholder="Scannez ou saisissez le barcode" style="flex:1;min-width:240px">
+    <button onclick="scan()">✅ ENREGISTRER</button>
+  </div>
+  <p class="small">Après chaque scan, appuyez sur ENTRÉE ou sur le bouton ENREGISTRER. Le champ se vide automatiquement pour le prochain colis.</p>
+  <div id="msg"></div>
+</div>
+
+<div class="card">
+<h2>📊 Tableau de bord</h2>
+<div class="stats">
+<div class="stat">Sortie<b id="s">0</b></div>
+<div class="stat">Retour<b id="r">0</b></div>
+<div class="stat">Livrée<b id="l">0</b></div>
+<div class="stat">Total scans<b id="sc">0</b></div>
+</div>
+</div>
+
+<div class="card">
+<h2>🔎 Recherche / historique</h2>
+<input id="search" style="width:100%;box-sizing:border-box" placeholder="Barcode ou livreur">
+<br><br>
+<button onclick="exportCSV()">⬇️ Export CSV</button>
+<button class="danger" onclick="clearAll()">Effacer toutes les données</button>
+<br><br>
+<div style="overflow:auto">
+<table><thead><tr><th>Barcode</th><th>Livreur</th><th>Sortie</th><th>Retour</th><th>Statut</th><th>Dernière action</th></tr></thead>
+<tbody id="tbody"></tbody></table>
+</div>
+</div>
+</main>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
+<script>
+const firebaseConfig = {
+  apiKey: "AIzaSyCAM2OIGOSZkLX31yA2Xiw3fKE98BEiBNs",
+  authDomain: "suivi-colis-pro.firebaseapp.com",
+  projectId: "suivi-colis-pro",
+  storageBucket: "suivi-colis-pro.firebasestorage.app",
+  messagingSenderId: "516053648933",
+  appId: "1:516053648933:web:133ee34fa70ca37a7161cc"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+db.enablePersistence({synchronizeTabs:true}).catch(()=>{});
+
+const WS_KEY='suivi_colis_workspace';
+let workspaceId=localStorage.getItem(WS_KEY)||'';
+let data=[];
+let mode='Sortie';
+let unsubscribe=null;
+
+function genCode(){
+  if(crypto.randomUUID) return crypto.randomUUID().replace(/-/g,'');
+  return Date.now().toString(36)+Math.random().toString(36).slice(2)+Math.random().toString(36).slice(2);
+}
+function docIdFor(barcode,livreur){
+  return encodeURIComponent(barcode)+'__'+encodeURIComponent(livreur);
+}
+function showWorkspaceUI(){
+  document.getElementById('wsSetup').hidden=!!workspaceId;
+  document.getElementById('wsConnected').hidden=!workspaceId;
+  document.getElementById('wsCodeDisplay').value=workspaceId;
+}
+function connectWorkspace(id){
+  workspaceId=id;
+  localStorage.setItem(WS_KEY,id);
+  if(unsubscribe) unsubscribe();
+  unsubscribe=db.collection('workspaces').doc(workspaceId).collection('colis')
+    .onSnapshot(snap=>{
+      data=snap.docs.map(d=>d.data());
+      render();
+    }, err=>{
+      msg('⚠️ Erreur de connexion : '+err.message,'ret');
+    });
+  showWorkspaceUI();
+}
+document.getElementById('wsCreate').addEventListener('click',()=>{
+  connectWorkspace(genCode());
+});
+document.getElementById('wsJoinBtn').addEventListener('click',()=>{
+  const v=document.getElementById('wsJoinInput').value.trim();
+  if(v.length<20){ msg('⚠️ Code invalide (trop court).','ret'); return; }
+  connectWorkspace(v);
+});
+document.getElementById('wsCopyBtn').addEventListener('click',()=>{
+  const el=document.getElementById('wsCodeDisplay');
+  el.select();
+  navigator.clipboard && navigator.clipboard.writeText(workspaceId).then(()=>msg('✅ Code copié !','ok')).catch(()=>{});
+});
+document.getElementById('wsChangeBtn').addEventListener('click',()=>{
+  if(unsubscribe) unsubscribe();
+  workspaceId='';
+  localStorage.removeItem(WS_KEY);
+  data=[];
+  showWorkspaceUI();
+  render();
+});
+if(workspaceId) connectWorkspace(workspaceId);
+showWorkspaceUI();
+
+function setMode(m){
+ mode=m;
+ document.getElementById('sortie').className=m==='Sortie'?'active':'secondary';
+ document.getElementById('retour').className=m==='Retour'?'active':'secondary';
+ document.getElementById('modeText').innerHTML='<b>Mode '+m.toUpperCase()+'</b> — '+(m==='Sortie'?'scannez les colis sortants.':'scannez les colis retournés.');
+ document.getElementById('barcode').focus();
+}
+function now(){return new Date().toLocaleString('fr-FR')}
+function scan(){
+ if(!workspaceId){ msg('⚠️ Créez ou rejoignez un espace d\'équipe d\'abord (en haut de la page).','ret'); return; }
+ const input=document.getElementById('barcode');
+ const code=input.value.trim();
+ if(!code)return;
+ const livreur=document.getElementById('livreur').value;
+ let item=data.find(x=>x.barcode===code && x.livreur===livreur);
+ const ref=db.collection('workspaces').doc(workspaceId).collection('colis').doc(docIdFor(code,livreur));
+ if(mode==='Sortie'){
+   if(item && item.sortie){
+     msg('⚠️ Ce colis est déjà enregistré en Sortie.','ret'); input.value=''; return;
+   }
+   const actions=item?[...item.actions,'Sortie '+now()]:['Sortie '+now()];
+   ref.set({barcode:code,livreur,sortie:true,retour:item?item.retour:false,actions});
+   msg('✅ Sortie enregistrée : '+code,'ok');
+ }else{
+   if(!item || !item.sortie){msg('⚠️ Retour refusé : ce barcode n’a pas été trouvé en Sortie pour '+livreur,'ret');input.value='';return}
+   if(item.retour){msg('⚠️ Ce colis est déjà enregistré en Retour.','ret');input.value='';return}
+   const actions=[...item.actions,'Retour '+now()];
+   ref.set({barcode:code,livreur,sortie:true,retour:true,actions});
+   msg('🔄 Retour enregistré : '+code,'ret');
+ }
+ input.value=''; input.focus();
+}
+function msg(t,c){document.getElementById('msg').innerHTML='<p class="'+c+'">'+t+'</p>'}
+document.getElementById('barcode').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();scan()}});
+document.getElementById('search').addEventListener('input',render);
+document.getElementById('barcode').addEventListener('focus', function(){ this.select(); });
+
+function render(){
+ const livreur=document.getElementById('livreur').value;
+ const mine=data.filter(x=>x.livreur===livreur);
+ document.getElementById('s').textContent=mine.filter(x=>x.sortie).length;
+ document.getElementById('r').textContent=mine.filter(x=>x.retour).length;
+ document.getElementById('l').textContent=mine.filter(x=>x.sortie && !x.retour).length;
+ document.getElementById('sc').textContent=data.reduce((a,x)=>a+x.actions.length,0);
+ const q=normalize(document.getElementById('search').value);
+ const rows=data.filter(x=>normalize(x.barcode+' '+x.livreur+' '+(x.retour?'Retour':'Livrée')).includes(q));
+ document.getElementById('tbody').innerHTML=rows.map(x=>`<tr>
+ <td>${esc(x.barcode)}</td><td>${esc(x.livreur)}</td><td>${x.sortie?'✅':'—'}</td><td>${x.retour?'🔄':'—'}</td>
+ <td class="${x.retour?'ret':'ok'}">${x.retour?'Retour':'Livrée'}</td><td>${esc(x.actions[x.actions.length-1]||'')}</td></tr>`).join('');
+}
+function esc(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
+function normalize(s){return String(s).normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase()}
+document.getElementById('livreur').addEventListener('change',render);
+function exportCSV(){
+ let csv='Barcode,Livreur,Sortie,Retour,Statut,Derniere action\n';
+ data.forEach(x=>csv+=`"${x.barcode}","${x.livreur}",${x.sortie?'Oui':'Non'},${x.retour?'Oui':'Non'},"${x.retour?'Retour':'Livrée'}","${x.actions[x.actions.length-1]||''}"\n`);
+ const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['﻿'+csv],{type:'text/csv;charset=utf-8'}));a.download='suivi_colis.csv';a.click();
+}
+function clearAll(){
+ if(!workspaceId) return;
+ if(confirm('Effacer toutes les données de cette équipe (sur tous les appareils) ?')){
+   db.collection('workspaces').doc(workspaceId).collection('colis').get().then(snap=>{
+     const batch=db.batch();
+     snap.docs.forEach(d=>batch.delete(d.ref));
+     return batch.commit();
+   });
+ }
+}
+render();
+
+if('serviceWorker' in navigator){
+  window.addEventListener('load',()=>navigator.serviceWorker.register('sw.js'));
+}
+</script>
+</body>
+</html>
